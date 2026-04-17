@@ -15,12 +15,22 @@ logger = logging.getLogger(__name__)
 
 # Message type constants
 MSG_APPLICATION_AUTH_REQ = 2100
-MSG_APPLICATION_AUTH_RES = 2101
+MSG_APPLICATION_AUTH_RES = 2140
 MSG_ACCOUNT_AUTH_REQ = 2102
-MSG_ACCOUNT_AUTH_RES = 2103
+MSG_ACCOUNT_AUTH_RES = 2141
 MSG_GET_TRENDBARS_REQ = 2137
 MSG_GET_TRENDBARS_RES = 2138
 MSG_ERROR = 2142
+MSG_GET_ACCOUNT_INFO_REQ = 9032
+MSG_GET_ACCOUNT_INFO_RES = 9033
+MSG_SUBSCRIBE_REQ = 109
+MSG_SUBSCRIBE_RES = 110
+MSG_GET_OBSERVABLE_REQ = 113
+MSG_GET_OBSERVABLE_RES = 114
+MSG_PLACE_ORDER_REQ = 13
+MSG_PLACE_ORDER_RES = 14
+MSG_CLOSE_ORDER_REQ = 15
+MSG_CLOSE_ORDER_RES = 16
 
 # Period constants (cTrader)
 PERIOD_M1 = 1
@@ -209,3 +219,64 @@ class cTraderClient:
             })
         
         return parsed
+
+    async def get_account_info(self) -> dict:
+        """Get account balance and info."""
+        resp = await self._call(MSG_GET_ACCOUNT_INFO_REQ, {
+            "ctidTraderAccountId": self.account_id
+        })
+        if resp and resp.get("payloadType") == MSG_GET_ACCOUNT_INFO_RES:
+            return resp.get("payload", {})
+        return {}
+
+    async def subscribe(self, symbol_ids: List[int]) -> bool:
+        """Subscribe to one or more symbols for live data."""
+        resp = await self._call(MSG_SUBSCRIBE_REQ, {
+            "ctidTraderAccountId": self.account_id,
+            "symbolIds": symbol_ids
+        })
+        return resp and resp.get("payloadType") == MSG_SUBSCRIBE_RES
+
+    async def place_order(self, symbol_id: int, side: str, volume: float,
+                        stop_loss: float = 0, take_profit: float = 0,
+                        order_type: str = "market") -> dict:
+        """Place an order (buy/sell with SL/TP)."""
+        payload = {
+            "ctidTraderAccountId": self.account_id,
+            "symbolId": symbol_id,
+            "tradeSide": "buy" if side == "buy" else "sell",
+            "volume": volume,
+            "orderType": 1 if order_type == "market" else 2,
+        }
+        if stop_loss:
+            payload["stopLoss"] = int(stop_loss * 100000)
+        if take_profit:
+            payload["takeProfit"] = int(take_profit * 100000)
+
+        resp = await self._call(MSG_PLACE_ORDER_REQ, payload)
+        if resp and resp.get("payloadType") == MSG_PLACE_ORDER_RES:
+            return resp.get("payload", {})
+        return {}
+
+    async def close_all_positions(self) -> bool:
+        """Close all open positions."""
+        payload = {
+            "ctidTraderAccountId": self.account_id,
+            "method": 1  # Close all
+        }
+        resp = await self._call(MSG_CLOSE_ORDER_REQ, payload)
+        return resp and resp.get("payloadType") == MSG_CLOSE_ORDER_RES
+
+    def get_closes(self, count: int = 100) -> list:
+        """Get last N close prices from cached bars."""
+        if hasattr(self, '_bars_cache'):
+            return [b['close'] for b in self._bars_cache[-count:]]
+        return []
+
+    def cache_bar(self, bar: dict):
+        """Cache a bar for indicator calculation."""
+        if not hasattr(self, '_bars_cache'):
+            self._bars_cache = []
+        self._bars_cache.append(bar)
+        if len(self._bars_cache) > 500:
+            self._bars_cache.pop(0)
